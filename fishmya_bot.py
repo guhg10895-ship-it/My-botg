@@ -1,36 +1,40 @@
 #!/usr/bin/env python3
 """
-FishMya Game - Auto Coin Miner Bot for GitHub Actions
+FishMya Game - Universal Auto Miner Bot
 Author: GHOST
-Version: 3.1 - Direct Token (No Secrets Required)
+Version: 5.0 - Universal (Everyone can use)
 """
 
 import asyncio
 import aiohttp
 import json
 import os
+import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
-# ==================== CONFIGURATION (DIRECT) ====================
+# ==================== CONFIGURATION ====================
 BOT_TOKEN = "8801207672:AAEsJfwy12ePwpjvDNalCeIrYQl-91vgMMk"
 ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJkMDBvMWdJdXhnTHNsY1BoT0tuNkVwNkNLVEw5U21mWEU3ZUVDUUV5OUk4In0.eyJqdGkiOiIxMzFlZWE5OS1mZWNiLTRjNjMtYWZkMy02MDI4MDExYzczYjciLCJleHAiOjE3ODk3NTY5NTAsIm5iZiI6MCwiaWF0IjoxNzg3MDc4NTUwLCJpc3MiOiJodHRwczovL2lkLm15dGVsLmNvbS5tbS9hdXRoL3JlYWxtcy9jaW0iLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiMTgwMjc3MWUtNDI2Mi00MzkwLTkzYTAtNTgxMDA0NTViMDZhIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY3BtLWNsaWVudCIsImF1dGhfdGltZSI6MCwic2Vzc2lvbl9zdGF0ZSI6ImFjNWViYzI0LTdjMTUtNDYwZC04NDgzLWY0MzI2YzU0NDk2YiIsImFjciI6IjEiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7ImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoicHJvZmlsZSBlbWFpbCIsImVtYWlsX3ZlcmlmaWVkIjpmYWxzZSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYzYxNDgwMzAtNTMwNS00YWUxLTkwNjYtZDA5MTM0Yzg0MGFlIiwiaWQiOiIxODAyNzcxZS00MjYyLTQzOTAtOTNhMC01ODEwMDQ1NWIwNmEifQ.nG5DWSXOdVkdojz31jD6OonpRbZ_WutgRlzXx93rNBqeX4cTxMpr0B-7z2bDCB5R27EOrbg1DTKPo62eiI8qy94mEeg1wbKFvJOKXxjkugAwq5OZcSUcHeWR9KOS4cZciVAiph4TMNXbwhPWu-mW55zYkRNGXW9NPfd_zJZvnokgGEXFAPUYn0rdGX6vxYIgglbyDPRL1lftxFT0YmfFUruj2_Kva11xh1DN-m5yMlXZA1AtBLAlHDvllEzULXHu6f3ByiuTA_PvdZumJlLVZTBChcIHiDGOniANpK_DKMXoohrOl_DrZD9GcLAGstK6zR98hjmEF0P2OE4BCrkGEQ"
 PHONE_NUMBER = "959676109648"
-CHAT_ID = "YOUR_CHAT_ID_HERE"  # မင်းရဲ့ Telegram Chat ID ထည့်ပါ
-
 GAME_URL = "https://fishmya.ugame.vn"
 
 # ==================== LOGGING ====================
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
+# ==================== TELEGRAM API ====================
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+last_update_id = 0
+processed_users = set()
+
 # ==================== ENDPOINTS ====================
 POTENTIAL_ENDPOINTS = [
-    # Balance/Client endpoints
     "/api/balance",
     "/api/client/balance",
     "/api/client/coins",
@@ -41,102 +45,72 @@ POTENTIAL_ENDPOINTS = [
     "/api/profile/balance",
     "/api/profile/coins",
     "/api/profile/rewards",
-    
-    # Daily rewards
+    "/api/me",
+    "/api/user/info",
     "/api/daily/claim",
     "/api/daily-reward",
     "/api/rewards/daily",
     "/api/daily-bonus",
     "/api/daily/checkin",
     "/api/checkin",
-    
-    # Coin collections
+    "/api/daily/login",
     "/api/coins/claim",
     "/api/coins/collect",
     "/api/coins/reward",
     "/api/collect-coins",
     "/api/claim-coins",
     "/api/coin-reward",
-    
-    # Game rewards
     "/api/game/rewards",
     "/api/rewards/claim",
     "/api/rewards/collect",
     "/api/game/claim",
     "/api/game/coin-reward",
-    
-    # Missions
+    "/api/game/reward",
     "/api/missions/complete",
     "/api/tasks/claim",
     "/api/quests/reward",
     "/api/mission-rewards",
     "/api/task-rewards",
-    
-    # Level rewards
     "/api/level/reward",
     "/api/levelup/reward",
     "/api/level-bonus",
-    
-    # Login rewards
     "/api/login/reward",
     "/api/login-bonus",
     "/api/welcome-reward",
     "/api/login/claim",
-    
-    # Spin rewards
     "/api/spin/reward",
     "/api/wheel/claim",
     "/api/lucky-spin",
     "/api/spin/claim",
-    
-    # Ads rewards
     "/api/ads/reward",
     "/api/watch-ad",
     "/api/ad-rewards",
     "/api/ad/claim",
-    
-    # Friends
     "/api/friends/rewards",
     "/api/invite/reward",
     "/api/referral/claim",
-    
-    # Events
     "/api/events/rewards",
     "/api/event/claim",
     "/api/special-rewards",
-    
-    # Fish
     "/api/fish/catch",
     "/api/fishing/reward",
     "/api/catch-reward",
     "/api/fish/claim",
-    
-    # Treasure
     "/api/treasure/claim",
     "/api/chest/open",
     "/api/chest-rewards",
-    
-    # Achievement
     "/api/achievements/claim",
     "/api/achievement/reward",
-    
-    # Bonus
     "/api/bonus/claim",
     "/api/bonus-rewards",
     "/api/extra-bonus",
-    
-    # Hourly
     "/api/hourly/claim",
     "/api/hourly-reward",
     "/api/time-rewards",
-    
-    # Web client
     "/api/web/claim",
     "/api/web/rewards",
     "/api/website/claim",
     "/api/web/balance",
-    
-    # Additional
     "/api/reward/claim",
     "/api/claim/reward",
     "/api/get-reward",
@@ -146,6 +120,12 @@ POTENTIAL_ENDPOINTS = [
     "/api/refresh",
     "/api/sync",
     "/api/update/balance",
+    "/api/v1/balance",
+    "/api/v1/rewards",
+    "/api/v1/claim",
+    "/api/v2/balance",
+    "/api/v2/rewards",
+    "/api/v2/claim",
 ]
 
 class FishMyaMiner:
@@ -157,13 +137,10 @@ class FishMyaMiner:
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Origin': base_url,
             'Referer': f'{base_url}/',
             'X-Requested-With': 'XMLHttpRequest',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
         }
         self.found_endpoints = []
         self.total_mined = 0
@@ -183,32 +160,25 @@ class FishMyaMiner:
         
         try:
             session = await self.create_session()
-            
-            check_endpoints = ["/api/profile", "/api/user", "/api/balance", "/api/me", "/api/user/info"]
+            check_endpoints = ["/api/profile", "/api/user", "/api/balance", "/api/me"]
             
             for endpoint in check_endpoints:
                 try:
                     async with session.get(f"{self.base_url}{endpoint}", timeout=10) as response:
                         if response.status == 200:
                             result['valid'] = True
-                            result['message'] = f'Login valid via {endpoint}'
+                            result['message'] = f'Login OK via {endpoint}'
                             data = await response.json()
                             result['balance'] = self.extract_coin_amount(data)
-                            logger.info(f"Login OK: {endpoint} - Balance: {result['balance']}")
+                            logger.info(f"✅ Login OK: {endpoint} - Balance: {result['balance']}")
                             break
                         elif response.status == 401:
                             result['message'] = 'Token expired (401)'
-                        elif response.status == 403:
-                            result['message'] = 'Access forbidden (403)'
-                        else:
-                            result['message'] = f'HTTP {response.status}'
-                except asyncio.TimeoutError:
-                    continue
                 except:
                     continue
             
             if not result['valid'] and not result['message']:
-                result['message'] = 'All check endpoints failed'
+                result['message'] = 'Cannot connect to game server'
         
         except Exception as e:
             result['message'] = f'Error: {str(e)}'
@@ -221,14 +191,12 @@ class FishMyaMiner:
             'success': False,
             'repeatable': False,
             'coin_amount': 0,
-            'status': None,
-            'error': None
+            'status': None
         }
         
         session = await self.create_session()
         url = f"{self.base_url}{endpoint}"
         
-        # Test GET
         try:
             async with session.get(url, timeout=8) as response:
                 result['status'] = response.status
@@ -240,51 +208,41 @@ class FishMyaMiner:
                             result['success'] = True
                             result['coin_amount'] = coins
                             
-                            # Test repeatability
                             await asyncio.sleep(0.3)
                             async with session.get(url, timeout=8) as retry:
                                 if retry.status == 200:
                                     retry_data = await retry.json()
-                                    retry_coins = self.extract_coin_amount(retry_data)
-                                    if retry_coins > 0:
+                                    if self.extract_coin_amount(retry_data) > 0:
                                         result['repeatable'] = True
-                            
                             return result
                     except:
                         pass
         except:
             pass
         
-        # Test POST
         try:
-            payloads = [{}, {"action": "claim"}, {"type": "claim"}]
-            for payload in payloads:
-                async with session.post(url, json=payload, timeout=8) as response:
-                    result['status'] = response.status
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            coins = self.extract_coin_amount(data)
-                            if coins > 0:
-                                result['success'] = True
-                                result['coin_amount'] = coins
-                                
-                                # Test repeatability
-                                await asyncio.sleep(0.3)
-                                async with session.post(url, json=payload, timeout=8) as retry:
-                                    if retry.status == 200:
-                                        retry_data = await retry.json()
-                                        retry_coins = self.extract_coin_amount(retry_data)
-                                        if retry_coins > 0:
-                                            result['repeatable'] = True
-                                
-                                return result
-                        except:
-                            pass
+            async with session.post(url, json={}, timeout=8) as response:
+                result['status'] = response.status
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        coins = self.extract_coin_amount(data)
+                        if coins > 0:
+                            result['success'] = True
+                            result['coin_amount'] = coins
+                            
+                            await asyncio.sleep(0.3)
+                            async with session.post(url, json={}, timeout=8) as retry:
+                                if retry.status == 200:
+                                    retry_data = await retry.json()
+                                    if self.extract_coin_amount(retry_data) > 0:
+                                        result['repeatable'] = True
+                            return result
+                    except:
+                        pass
         except:
             pass
         
-        result['error'] = f'HTTP {result["status"]}' if result['status'] else 'Failed'
         return result
     
     def extract_coin_amount(self, data: Any) -> int:
@@ -297,7 +255,7 @@ class FishMyaMiner:
             'gold', 'golds', 'point', 'points', 'balance',
             'currency', 'currencies', 'fishcoin', 'fish_coins',
             'money', 'cash', 'credit', 'credits', 'diamond',
-            'diamonds', 'gem', 'gems', 'fish', 'score', 'total'
+            'diamonds', 'gem', 'gems', 'fish', 'score'
         ]
         
         def search(obj, depth=0):
@@ -307,12 +265,10 @@ class FishMyaMiner:
                 for key, value in obj.items():
                     key_lower = key.lower()
                     if any(p in key_lower for p in coin_patterns):
-                        if isinstance(value, (int, float)):
-                            if value > 0:
-                                return int(value)
-                        elif isinstance(value, str) and value.isdigit():
-                            if int(value) > 0:
-                                return int(value)
+                        if isinstance(value, (int, float)) and value > 0:
+                            return int(value)
+                        elif isinstance(value, str) and value.isdigit() and int(value) > 0:
+                            return int(value)
                     result = search(value, depth + 1)
                     if result > 0:
                         return result
@@ -326,83 +282,61 @@ class FishMyaMiner:
         return search(data)
     
     async def scan_all(self) -> Dict:
-        results = []
         successful = []
         repeatable = []
         
-        logger.info(f"Scanning {len(POTENTIAL_ENDPOINTS)} endpoints...")
+        logger.info(f"🔍 Scanning {len(POTENTIAL_ENDPOINTS)} endpoints...")
         
-        for i, endpoint in enumerate(POTENTIAL_ENDPOINTS, 1):
+        for endpoint in POTENTIAL_ENDPOINTS:
             result = await self.test_endpoint(endpoint)
-            results.append(result)
             
             if result['success']:
                 successful.append(result)
-                logger.info(f"[{i}/{len(POTENTIAL_ENDPOINTS)}] ✅ {endpoint} - {result['coin_amount']} coins (Repeatable: {result['repeatable']})")
-                
+                logger.info(f"✅ {endpoint} - {result['coin_amount']} coins (Repeatable: {result['repeatable']})")
                 if result['repeatable']:
                     repeatable.append(result)
-            else:
-                logger.debug(f"[{i}/{len(POTENTIAL_ENDPOINTS)}] ❌ {endpoint}")
             
             await asyncio.sleep(0.2)
         
         self.found_endpoints = successful
         self.repeatable_endpoints = repeatable
         
-        total_available = sum(r['coin_amount'] for r in successful)
-        total_repeatable = sum(r['coin_amount'] for r in repeatable)
-        
-        logger.info(f"Scan complete: {len(successful)} working, {len(repeatable)} repeatable")
-        logger.info(f"Total available: {total_available}, Repeatable total: {total_repeatable}")
-        
         return {
-            'total_scanned': len(results),
+            'total_scanned': len(POTENTIAL_ENDPOINTS),
             'successful': successful,
             'repeatable': repeatable,
-            'total_coins': total_available,
-            'repeatable_coins': total_repeatable
+            'total_coins': sum(r['coin_amount'] for r in successful)
         }
     
-    async def mine_repeatable(self, times_per_endpoint: int = 50) -> int:
+    async def mine_repeatable(self, times: int = 100) -> int:
         total_mined = 0
         session = await self.create_session()
         
         for endpoint_info in self.repeatable_endpoints:
             endpoint = endpoint_info['endpoint']
-            coins_per_claim = endpoint_info['coin_amount']
-            logger.info(f"Mining {endpoint} - {coins_per_claim} coins per claim...")
             
-            for i in range(times_per_endpoint):
+            for i in range(times):
                 try:
                     url = f"{self.base_url}{endpoint}"
                     async with session.get(url, timeout=8) as response:
                         if response.status == 200:
                             data = await response.json()
                             coins = self.extract_coin_amount(data)
-                            if coins > 0:
-                                total_mined += coins
+                            total_mined += coins
                             await asyncio.sleep(0.15)
                         else:
-                            logger.info(f"Stopped at iteration {i+1} (HTTP {response.status})")
                             break
-                except asyncio.TimeoutError:
-                    logger.info(f"Timeout at iteration {i+1}")
-                    break
                 except:
-                    logger.info(f"Error at iteration {i+1}")
                     break
             
-            # Also try POST method
             try:
-                for i in range(20):
+                for i in range(30):
                     url = f"{self.base_url}{endpoint}"
                     async with session.post(url, json={}, timeout=8) as response:
                         if response.status == 200:
                             data = await response.json()
                             coins = self.extract_coin_amount(data)
-                            if coins > 0:
-                                total_mined += coins
+                            total_mined += coins
                             await asyncio.sleep(0.15)
                         else:
                             break
@@ -410,46 +344,39 @@ class FishMyaMiner:
                 pass
         
         self.total_mined += total_mined
-        logger.info(f"Total mined: {total_mined}")
         return total_mined
     
-    def format_report(self, scan_result: Dict, mined: int = 0, login_balance: int = 0) -> str:
-        report = "🎣 **FishMya Mining Report**\n\n"
-        report += f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        report += f"🔐 Login Balance: {login_balance:,} coins\n"
-        report += f"📊 Endpoints Scanned: {scan_result['total_scanned']}\n"
+    def format_report(self, scan_result: Dict, mined: int, login_balance: int) -> str:
+        report = "🎣 *FishMya Mining Report*\n\n"
+        report += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        report += f"🔐 Balance: {login_balance:,} coins\n"
+        report += f"📊 Scanned: {scan_result['total_scanned']}\n"
         report += f"✅ Working: {len(scan_result['successful'])}\n"
         report += f"🔄 Repeatable: {len(scan_result['repeatable'])}\n"
-        report += f"💰 Available: {scan_result['total_coins']:,} coins\n"
+        report += f"💰 Available: {scan_result['total_coins']:,}\n"
         
         if mined > 0:
-            report += f"⛏️ Mined This Round: {mined:,} coins\n"
-            report += f"🪙 Total Mined All Time: {self.total_mined:,} coins\n"
+            report += f"⛏️ Mined: {mined:,} coins\n"
         
         if scan_result['repeatable']:
-            report += "\n🎯 **Repeatable Endpoints (JACKPOT!):**\n"
+            report += "\n🎯 *JACKPOT Endpoints:*\n"
             for r in scan_result['repeatable'][:10]:
-                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,} coins/claim\n"
+                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}/claim\n"
         elif scan_result['successful']:
-            report += "\n✅ **Working Endpoints:**\n"
+            report += "\n✅ *Working:*\n"
             for r in scan_result['successful'][:10]:
-                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,} coins\n"
+                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}\n"
         else:
-            report += "\n❌ No working endpoints found\n"
-            report += "🔄 Try updating ACCESS_TOKEN"
+            report += "\n❌ No endpoints found\n"
         
         return report
 
-async def send_telegram_message(bot_token: str, chat_id: str, message: str):
-    """Send message via Telegram API"""
-    if not bot_token or not chat_id or chat_id == "YOUR_CHAT_ID_HERE":
-        logger.warning("CHAT_ID not set, skipping Telegram notification")
-        return
-    
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+async def send_message(chat_id: str, text: str):
+    """Send message to specific chat"""
+    url = f"{TELEGRAM_API}/sendMessage"
     payload = {
         'chat_id': chat_id,
-        'text': message,
+        'text': text,
         'parse_mode': 'Markdown'
     }
     
@@ -457,86 +384,206 @@ async def send_telegram_message(bot_token: str, chat_id: str, message: str):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=15) as response:
                 if response.status == 200:
-                    logger.info("Telegram notification sent ✅")
+                    logger.info(f"✅ Message sent to {chat_id}")
+                    return True
                 else:
                     response_text = await response.text()
-                    logger.error(f"Telegram send failed: {response.status} - {response_text}")
+                    logger.error(f"Failed to send to {chat_id}: {response.status}")
+                    return False
     except Exception as e:
         logger.error(f"Telegram error: {e}")
+        return False
+
+async def get_updates(offset: int = 0) -> List[Dict]:
+    """Get bot updates"""
+    url = f"{TELEGRAM_API}/getUpdates"
+    params = {'timeout': 30, 'offset': offset}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=35) as response:
+                data = await response.json()
+                if data.get('ok'):
+                    return data.get('result', [])
+    except:
+        pass
+    
+    return []
+
+async def process_command(chat_id: str, command: str):
+    """Process user commands"""
+    command = command.lower().strip()
+    
+    if command in ['/start', '/help']:
+        help_text = (
+            "🎣 *FishMya Auto Miner Bot*\n\n"
+            "👋 မင်္ဂလာပါ! ဒီ bot က FishMya game ကနေ coins တွေ auto ရှာပေးမယ်။\n\n"
+            "📋 *Commands:*\n"
+            "🔹 `/mine` - Auto mining စတင်ရန်\n"
+            "🔹 `/scan` - Endpoints ရှာဖွေရန်\n"
+            "🔹 `/balance` - Balance စစ်ဆေးရန်\n"
+            "🔹 `/status` - Bot status ကြည့်ရန်\n\n"
+            "⚡ *Powered by GHOST AI*"
+        )
+        await send_message(chat_id, help_text)
+    
+    elif command in ['/mine', '/start_mining']:
+        await send_message(chat_id, "⛏️ *Mining Started!*\n\nPlease wait...")
+        
+        miner = FishMyaMiner(GAME_URL, ACCESS_TOKEN)
+        
+        try:
+            # Check login
+            login_result = await miner.check_login()
+            
+            if not login_result['valid']:
+                await send_message(chat_id, f"❌ *Login Failed:* {login_result['message']}")
+                return
+            
+            # Scan
+            scan_result = await miner.scan_all()
+            
+            # Mine
+            mined = 0
+            if scan_result['repeatable']:
+                mined = await miner.mine_repeatable(times=100)
+            
+            # Report
+            report = miner.format_report(scan_result, mined, login_result['balance'])
+            await send_message(chat_id, report)
+            
+        except Exception as e:
+            await send_message(chat_id, f"❌ Error: {str(e)}")
+        finally:
+            await miner.close_session()
+    
+    elif command in ['/scan', '/search']:
+        await send_message(chat_id, "🔍 *Scanning endpoints...*\n\nThis may take a minute...")
+        
+        miner = FishMyaMiner(GAME_URL, ACCESS_TOKEN)
+        
+        try:
+            login_result = await miner.check_login()
+            
+            if not login_result['valid']:
+                await send_message(chat_id, f"❌ *Login Failed:* {login_result['message']}")
+                return
+            
+            scan_result = await miner.scan_all()
+            report = miner.format_report(scan_result, 0, login_result['balance'])
+            await send_message(chat_id, report)
+            
+        except Exception as e:
+            await send_message(chat_id, f"❌ Error: {str(e)}")
+        finally:
+            await miner.close_session()
+    
+    elif command in ['/balance', '/check']:
+        await send_message(chat_id, "🔐 *Checking balance...*")
+        
+        miner = FishMyaMiner(GAME_URL, ACCESS_TOKEN)
+        
+        try:
+            login_result = await miner.check_login()
+            
+            if login_result['valid']:
+                await send_message(
+                    chat_id,
+                    f"💰 *Balance:* {login_result['balance']:,} coins\n"
+                    f"🔑 Token: Active ✅\n"
+                    f"📱 Phone: {PHONE_NUMBER}"
+                )
+            else:
+                await send_message(chat_id, f"❌ *Login Failed:* {login_result['message']}")
+            
+        finally:
+            await miner.close_session()
+    
+    elif command in ['/status', '/info']:
+        status_text = (
+            "📊 *Bot Status*\n\n"
+            f"🎮 Game: FishMya\n"
+            f"🔗 URL: {GAME_URL}\n"
+            f"📱 Phone: {PHONE_NUMBER}\n"
+            f"🔑 Token: Active ✅\n"
+            f"⚡ Bot: Running\n"
+            f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        await send_message(chat_id, status_text)
+    
+    else:
+        await send_message(
+            chat_id,
+            "❓ Unknown command\n\n"
+            "Use /help to see available commands"
+        )
 
 async def main():
-    logger.info("=" * 60)
-    logger.info("🎣 FishMya Auto Miner Starting...")
-    logger.info(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 60)
+    global last_update_id
+    global processed_users
     
-    if not ACCESS_TOKEN:
-        logger.error("ACCESS_TOKEN not set!")
-        return
+    print("\n" + "=" * 60)
+    print("🎣 FishMya Universal Auto Miner Bot")
+    print(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🔑 Token: {'✅ Set' if ACCESS_TOKEN else '❌ Not set'}")
+    print("=" * 60 + "\n")
+    
+    logger.info("🤖 Bot polling started...")
+    logger.info("💡 Send /start to your bot on Telegram!")
     
     miner = FishMyaMiner(GAME_URL, ACCESS_TOKEN)
     
     try:
-        # Check login
-        logger.info("🔐 Checking login status...")
-        login_result = await miner.check_login()
-        logger.info(f"Login Result: {login_result['message']}")
-        
-        if not login_result['valid']:
-            error_msg = (
-                f"❌ **Login Failed!**\n\n"
-                f"⚠️ Reason: {login_result['message']}\n\n"
-                f"🔄 ACCESS_TOKEN သက်တမ်းကုန်သွားနိုင်တယ်\n"
-                f"💡 Game website ကနေ token အသစ်ယူပြီး ထည့်ပါ"
-            )
-            await send_telegram_message(BOT_TOKEN, CHAT_ID, error_msg)
-            logger.error("Login failed, exiting...")
-            return
-        
-        logger.info(f"💰 Current balance: {login_result['balance']:,} coins")
-        
-        # Scan endpoints
-        logger.info("🔍 Scanning for coin endpoints...")
-        scan_result = await miner.scan_all()
-        
-        # Mine repeatable endpoints
-        mined = 0
-        if scan_result['repeatable']:
-            logger.info(f"⛏️ Found {len(scan_result['repeatable'])} repeatable endpoints, mining...")
-            mined = await miner.mine_repeatable(times_per_endpoint=100)
-            logger.info(f"⛏️ Mined {mined:,} coins this session")
-        else:
-            logger.info("❌ No repeatable endpoints found")
-            if scan_result['successful']:
-                logger.info(f"✅ But found {len(scan_result['successful'])} one-time endpoints")
-        
-        # Generate report
-        report = miner.format_report(scan_result, mined, login_result['balance'])
-        logger.info("\n" + report)
-        
-        # Send Telegram notification
-        await send_telegram_message(BOT_TOKEN, CHAT_ID, report)
-        
-        # Final balance check
-        await asyncio.sleep(2)
-        final_login = await miner.check_login()
-        if final_login['valid']:
-            final_report = (
-                f"📊 **Final Status**\n\n"
-                f"💰 Final Balance: {final_login['balance']:,} coins\n"
-                f"🪙 Mined This Session: {mined:,} coins\n"
-                f"⏰ Completed: {datetime.now().strftime('%H:%M:%S')}"
-            )
-            await send_telegram_message(BOT_TOKEN, CHAT_ID, final_report)
-        
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        error_msg = f"❌ **Error:** {str(e)}"
-        await send_telegram_message(BOT_TOKEN, CHAT_ID, error_msg)
+        while True:
+            # Get updates
+            updates = await get_updates(last_update_id + 1)
+            
+            for update in updates:
+                update_id = update.get('update_id', 0)
+                
+                if update_id > last_update_id:
+                    last_update_id = update_id
+                
+                # Process message
+                if 'message' in update:
+                    message = update['message']
+                    chat_id = str(message.get('chat', {}).get('id', ''))
+                    text = message.get('text', '')
+                    user_id = str(message.get('from', {}).get('id', ''))
+                    
+                    if chat_id and text:
+                        logger.info(f"📩 Message from {chat_id}: {text}")
+                        
+                        # Process command
+                        await process_command(chat_id, text)
+                        
+                        # Track user
+                        processed_users.add(user_id)
+            
+            # Auto mine every 5 minutes for all users
+            if processed_users and datetime.now().minute % 5 == 0:
+                logger.info("⛏️ Auto mining for all users...")
+                
+                login_result = await miner.check_login()
+                
+                if login_result['valid']:
+                    scan_result = await miner.scan_all()
+                    
+                    if scan_result['repeatable']:
+                        mined = await miner.mine_repeatable(times=50)
+                        report = miner.format_report(scan_result, mined, login_result['balance'])
+                        
+                        for chat_id in processed_users:
+                            await send_message(chat_id, report)
+            
+            await asyncio.sleep(2)
     
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot error: {e}")
     finally:
         await miner.close_session()
-        logger.info("🏁 Mining session completed")
 
 if __name__ == "__main__":
     asyncio.run(main())
