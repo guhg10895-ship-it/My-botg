@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
 """
-FishMya Game - HTTP Login + API Scanner (No WebSocket)
+FishMya Game - WebSocket Login + Coin Scanner
 Author: GHOST
-Version: 8.0 - Fixed Login
+Version: 9.0 - Working Login Method
 """
 
 import asyncio
 import aiohttp
 import json
+import time
 import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
+import msgpack
+import ssl
+import threading
 from urllib.parse import urlparse, parse_qs
+import websocket  # မင်းရဲ့ original library
 
 # ==================== CONFIGURATION ====================
 TELEGRAM_BOT_TOKEN = "8801207672:AAEsJfwy12ePwpjvDNalCeIrYQl-91vgMMk"
-GAME_URL = "https://fishmya.ugame.vn"
-FULL_GAME_URL = "https://fishmya.ugame.vn?accessToken=eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJkMDBvMWdJdXhnTHNsY1BoT0tuNkVwNkNLVEw5U21mWEU3ZUVDUUV5OUk4In0.eyJqdGkiOiIxMzFlZWE5OS1mZWNiLTRjNjMtYWZkMy02MDI4MDExYzczYjciLCJleHAiOjE3ODk3NTY5NTAsIm5iZiI6MCwiaWF0IjoxNzg3MDc4NTUwLCJpc3MiOiJodHRwczovL2lkLm15dGVsLmNvbS5tbS9hdXRoL3JlYWxtcy9jaW0iLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiMTgwMjc3MWUtNDI2Mi00MzkwLTkzYTAtNTgxMDA0NTViMDZhIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY3BtLWNsaWVudCIsImF1dGhfdGltZSI6MCwic2Vzc2lvbl9zdGF0ZSI6ImFjNWViYzI0LTdjMTUtNDYwZC04NDgzLWY0MzI2YzU0NDk2YiIsImFjciI6IjEiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7ImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoicHJvZmlsZSBlbWFpbCIsImVtYWlsX3ZlcmlmaWVkIjpmYWxzZSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYzYxNDgwMzAtNTMwNS00YWUxLTkwNjYtZDA5MTM0Yzg0MGFlIiwiaWQiOiIxODAyNzcxZS00MjYyLTQzOTAtOTNhMC01ODEwMDQ1NWIwNmEifQ.nG5DWSXOdVkdojz31jD6OonpRbZ_WutgRlzXx93rNBqeX4cTxMpr0B-7z2bDCB5R27EOrbg1DTKPo62eiI8qy94mEeg1wbKFvJOKXxjkugAwq5OZcSUcHeWR9KOS4cZciVAiph4TMNXbwhPWu-mW55zYkRNGXW9NPfd_zJZvnokgGEXFAPUYn0rdGX6vxYIgglbyDPRL1lftxFT0YmfFUruj2_Kva11xh1DN-m5yMlXZA1AtBLAlHDvllEzULXHu6f3ByiuTA_PvdZumJlLVZTBChcIHiDGOniANpK_DKMXoohrOl_DrZD9GcLAGstK6zR98hjmEF0P2OE4BCrkGEQ"
+WS_URL = "wss://api-fishmcloud.ugame.vn:2083"
+GAME_BASE_URL = "https://fishmya.ugame.vn"
 PHONE_NUMBER = "959676109648"
 
-# Extract token from URL
-ACCESS_TOKEN = ""
-if "accessToken=" in FULL_GAME_URL:
-    ACCESS_TOKEN = FULL_GAME_URL.split("accessToken=")[1].split("&")[0]
-elif "access_token=" in FULL_GAME_URL:
-    ACCESS_TOKEN = FULL_GAME_URL.split("access_token=")[1].split("&")[0]
+WS_HEADERS = [
+    "User-Agent: Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Origin: https://fishmya.ugame.vn",
+    "Accept-Language: my-MM,my;q=0.9,en-US;q=0.8,en;q=0.7",
+    "X-Requested-With: com.mytel.myid"
+]
 
 # ==================== LOGGING ====================
 logging.basicConfig(
@@ -39,9 +44,24 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 last_update_id = 0
 
+# ==================== STATE ====================
+config_data = {"game_access_token": None}
+game_session = {
+    'username': '',
+    'nickname': '',
+    'balance': 0,
+    'logged_in': False,
+    'headers': {},
+    'repeatable_endpoints': [],
+    'total_claimed': 0
+}
+
+# ==================== TOKEN STORAGE ====================
+# မင်းရဲ့ token ကို ဒီမှာ ထည့်ပါ
+GAME_ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJkMDBvMWdJdXhnTHNsY1BoT0tuNkVwNkNLVEw5U21mWEU3ZUVDUUV5OUk4In0.eyJqdGkiOiIxMzFlZWE5OS1mZWNiLTRjNjMtYWZkMy02MDI4MDExYzczYjciLCJleHAiOjE3ODk3NTY5NTAsIm5iZiI6MCwiaWF0IjoxNzg3MDc4NTUwLCJpc3MiOiJodHRwczovL2lkLm15dGVsLmNvbS5tbS9hdXRoL3JlYWxtcy9jaW0iLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiMTgwMjc3MWUtNDI2Mi00MzkwLTkzYTAtNTgxMDA0NTViMDZhIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY3BtLWNsaWVudCIsImF1dGhfdGltZSI6MCwic2Vzc2lvbl9zdGF0ZSI6ImFjNWViYzI0LTdjMTUtNDYwZC04NDgzLWY0MzI2YzU0NDk2YiIsImFjciI6IjEiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7ImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoicHJvZmlsZSBlbWFpbCIsImVtYWlsX3ZlcmlmaWVkIjpmYWxzZSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYzYxNDgwMzAtNTMwNS00YWUxLTkwNjYtZDA5MTM0Yzg0MGFlIiwiaWQiOiIxODAyNzcxZS00MjYyLTQzOTAtOTNhMC01ODEwMDQ1NWIwNmEifQ.nG5DWSXOdVkdojz31jD6OonpRbZ_WutgRlzXx93rNBqeX4cTxMpr0B-7z2bDCB5R27EOrbg1DTKPo62eiI8qy94mEeg1wbKFvJOKXxjkugAwq5OZcSUcHeWR9KOS4cZciVAiph4TMNXbwhPWu-mW55zYkRNGXW9NPfd_zJZvnokgGEXFAPUYn0rdGX6vxYIgglbyDPRL1lftxFT0YmfFUruj2_Kva11xh1DN-m5yMlXZA1AtBLAlHDvllEzULXHu6f3ByiuTA_PvdZumJlLVZTBChcIHiDGOniANpK_DKMXoohrOl_DrZD9GcLAGstK6zR98hjmEF0P2OE4BCrkGEQ"
+
 # ==================== COIN ENDPOINTS ====================
 POTENTIAL_ENDPOINTS = [
-    # Most common coin endpoints
     "/api/balance",
     "/api/user/balance",
     "/api/user/coins",
@@ -53,11 +73,9 @@ POTENTIAL_ENDPOINTS = [
     "/api/account/balance",
     "/api/account/coins",
     "/api/account/rewards",
-    "/api/account/info",
     "/api/player/balance",
     "/api/player/coins",
     "/api/player/rewards",
-    "/api/player/info",
     "/api/coins/claim",
     "/api/coins/collect",
     "/api/coins/reward",
@@ -121,7 +139,7 @@ POTENTIAL_ENDPOINTS = [
     "/api/v2/claim",
 ]
 
-# ==================== HELPERS ====================
+# ==================== UTILS ====================
 def extract_coin_amount(data: Any) -> int:
     """Extract coin amount from response"""
     if not data:
@@ -133,7 +151,7 @@ def extract_coin_amount(data: Any) -> int:
         'gold', 'golds', 'point', 'points', 'balance',
         'currency', 'currencies', 'fishcoin', 'fish_coins',
         'money', 'cash', 'credit', 'credits', 'diamond',
-        'diamonds', 'gem', 'gems', 'fish', 'score', 'total'
+        'diamonds', 'gem', 'gems', 'fish', 'score'
     ]
     
     def search(obj, depth=0):
@@ -174,8 +192,7 @@ async def send_telegram(chat_id: str, text: str):
                 if response.status == 200:
                     return True
                 else:
-                    response_text = await response.text()
-                    logger.error(f"Telegram failed: {response.status} - {response_text[:200]}")
+                    logger.error(f"Telegram failed: {response.status}")
                     return False
     except Exception as e:
         logger.error(f"Telegram error: {e}")
@@ -197,43 +214,116 @@ async def get_updates(offset: int = 0) -> List[Dict]:
     
     return []
 
-# ==================== HTTP LOGIN + SCAN ====================
-async def login_and_get_headers() -> Optional[Dict]:
-    """Login and get session headers"""
-    
-    headers = {
-        'Authorization': f'Bearer {ACCESS_TOKEN}',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Origin': GAME_URL,
-        'Referer': f'{GAME_URL}/',
-        'X-Requested-With': 'XMLHttpRequest',
+# ==================== WEBSOCKET LOGIN (မင်းရဲ့နည်း) ====================
+def ws_login_sync(access_token: str) -> Dict:
+    """Login via WebSocket using your original method"""
+    result = {
+        'success': False,
+        'message': '',
+        'username': '',
+        'nickname': '',
+        'balance': 0
     }
     
-    # Try to get session via login page
+    url = f"{WS_URL}?access_token={access_token}"
+    
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            # Try to access the game page first
-            async with session.get(FULL_GAME_URL, timeout=15) as response:
-                if response.status == 200:
-                    logger.info("✅ Game page accessed")
-                    # Get cookies
-                    cookies = session.cookie_jar.filter_cookies(GAME_URL)
-                    if cookies:
-                        cookie_header = "; ".join([f"{k}={v.value}" for k, v in cookies.items()])
-                        headers['Cookie'] = cookie_header
-                        logger.info(f"✅ Got cookies: {len(cookies)} cookies")
-    
+        ws = websocket.create_connection(
+            url,
+            header=WS_HEADERS,
+            sslopt={"cert_reqs": ssl.CERT_NONE},
+            timeout=30
+        )
+        
+        # Send login
+        login_payload = {
+            "route": "mytelLogin",
+            "data": {"accessToken": access_token, "language": "my"},
+            "msgId": 1
+        }
+        ws.send(msgpack.packb(login_payload, use_bin_type=True), opcode=websocket.ABNF.OPCODE_BINARY)
+        
+        # Wait for response
+        ws.settimeout(15)
+        try:
+            data = ws.recv()
+            if data:
+                decoded = msgpack.unpackb(data, raw=False)
+                inner = decoded.get("data", {})
+                msg_id = decoded.get("msgId", -1)
+                
+                if msg_id == 1 and inner.get("ok"):
+                    result['success'] = True
+                    result['message'] = 'Login successful'
+                    result['username'] = inner.get("username", "")
+                    result['nickname'] = inner.get("nickname", "User")
+                    result['balance'] = inner.get("cash", 0)
+                    
+                    logger.info(f"✅ Login OK: {result['nickname']}, Balance: {result['balance']:,}")
+                else:
+                    result['message'] = f"Login failed: {inner}"
+                    logger.error(f"❌ Login failed: {inner}")
+        
+        except Exception as e:
+            result['message'] = f"Response error: {e}"
+            logger.error(f"❌ Response error: {e}")
+        
+        ws.close()
+        
     except Exception as e:
-        logger.error(f"Login page error: {e}")
+        result['message'] = f"Connection error: {e}"
+        logger.error(f"❌ Connection error: {e}")
     
-    return headers
+    return result
 
-async def scan_endpoints(chat_id: str = None) -> Dict:
-    """Scan all endpoints for coins"""
+async def websocket_login(chat_id: str = None) -> Dict:
+    """Async wrapper for WebSocket login"""
+    if chat_id:
+        await send_telegram(chat_id, "🔐 *Logging in via WebSocket...*")
     
-    headers = await login_and_get_headers()
+    # Run sync login in thread
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, ws_login_sync, GAME_ACCESS_TOKEN)
+    
+    if result['success']:
+        game_session['logged_in'] = True
+        game_session['username'] = result['username']
+        game_session['nickname'] = result['nickname']
+        game_session['balance'] = result['balance']
+        
+        # Build HTTP headers for API calls
+        game_session['headers'] = {
+            'Authorization': f'Bearer {GAME_ACCESS_TOKEN}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36',
+            'Origin': GAME_BASE_URL,
+            'Referer': f'{GAME_BASE_URL}/',
+            'X-Requested-With': 'com.mytel.myid'
+        }
+        
+        if chat_id:
+            await send_telegram(
+                chat_id,
+                f"✅ *Login Successful!*\n\n"
+                f"👤 Nickname: {result['nickname']}\n"
+                f"💰 Balance: {result['balance']:,} coins\n\n"
+                f"🔍 Now scanning for coin endpoints..."
+            )
+    
+    return result
+
+# ==================== HTTP SCANNER ====================
+async def scan_endpoints(chat_id: str = None) -> Dict:
+    """Scan HTTP endpoints for coins"""
+    
+    headers = game_session.get('headers', {
+        'Authorization': f'Bearer {GAME_ACCESS_TOKEN}',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+        'Origin': GAME_BASE_URL,
+        'Referer': f'{GAME_BASE_URL}/',
+    })
     
     successful = []
     repeatable = []
@@ -243,7 +333,7 @@ async def scan_endpoints(chat_id: str = None) -> Dict:
     
     async with aiohttp.ClientSession(headers=headers) as session:
         for i, endpoint in enumerate(POTENTIAL_ENDPOINTS, 1):
-            url = f"{GAME_URL}{endpoint}"
+            url = f"{GAME_BASE_URL}{endpoint}"
             
             result = {
                 'endpoint': endpoint,
@@ -253,7 +343,7 @@ async def scan_endpoints(chat_id: str = None) -> Dict:
                 'status': None
             }
             
-            # Test GET
+            # GET
             try:
                 async with session.get(url, timeout=8) as response:
                     result['status'] = response.status
@@ -282,21 +372,12 @@ async def scan_endpoints(chat_id: str = None) -> Dict:
                                     repeatable.append(result)
                                 
                                 continue
-                        except json.JSONDecodeError:
+                        except:
                             pass
-                    
-                    elif response.status in [401, 403]:
-                        logger.warning(f"⚠️ [{i}] {endpoint} - Auth failed ({response.status})")
-                        # Token might be expired
-                        if i > 5 and not successful:
-                            break
-            
-            except asyncio.TimeoutError:
-                pass
-            except Exception:
+            except:
                 pass
             
-            # Test POST
+            # POST
             try:
                 async with session.post(url, json={}, timeout=8) as response:
                     if response.status == 200:
@@ -321,12 +402,14 @@ async def scan_endpoints(chat_id: str = None) -> Dict:
                                 
                                 if result['repeatable']:
                                     repeatable.append(result)
-                        except json.JSONDecodeError:
+                        except:
                             pass
             except:
                 pass
             
             await asyncio.sleep(0.2)
+    
+    game_session['repeatable_endpoints'] = repeatable
     
     return {
         'total_scanned': len(POTENTIAL_ENDPOINTS),
@@ -335,15 +418,15 @@ async def scan_endpoints(chat_id: str = None) -> Dict:
         'total_coins': sum(r['coin_amount'] for r in successful)
     }
 
+# ==================== AUTO CLAIM ====================
 async def auto_claim(chat_id: str, times: int = 100):
     """Auto claim from repeatable endpoints"""
     
-    headers = await login_and_get_headers()
-    
+    headers = game_session.get('headers', {})
     total_claimed = 0
     
     async with aiohttp.ClientSession(headers=headers) as session:
-        for endpoint_info in game_state['repeatable_endpoints']:
+        for endpoint_info in game_session['repeatable_endpoints']:
             endpoint = endpoint_info['endpoint']
             coins_per_claim = endpoint_info['coin_amount']
             
@@ -352,11 +435,12 @@ async def auto_claim(chat_id: str, times: int = 100):
             if chat_id:
                 await send_telegram(
                     chat_id,
-                    f"⛏️ *Claiming:* `{endpoint}`\n💰 {coins_per_claim:,} coins/claim"
+                    f"⛏️ *Claiming:* `{endpoint}`\n"
+                    f"💰 {coins_per_claim:,} coins/claim"
                 )
             
             for i in range(times):
-                url = f"{GAME_URL}{endpoint}"
+                url = f"{GAME_BASE_URL}{endpoint}"
                 
                 # GET
                 try:
@@ -382,17 +466,59 @@ async def auto_claim(chat_id: str, times: int = 100):
                 except:
                     pass
                 
-                break  # Stop if both fail
+                break
     
+    game_session['total_claimed'] += total_claimed
     return total_claimed
 
-# ==================== GAME STATE ====================
-game_state = {
-    'repeatable_endpoints': [],
-    'total_claimed': 0,
-    'balance': 0,
-    'nickname': '',
-}
+# ==================== MAIN MINING ====================
+async def run_miner(chat_id: str):
+    """Run complete mining session"""
+    
+    # Step 1: Login via WebSocket
+    login_result = await websocket_login(chat_id)
+    
+    if not login_result['success']:
+        if chat_id:
+            await send_telegram(
+                chat_id,
+                f"❌ *Login Failed!*\n\n"
+                f"⚠️ {login_result['message']}\n\n"
+                f"🔄 Update GAME_ACCESS_TOKEN in code"
+            )
+        return
+    
+    # Step 2: Scan
+    scan_result = await scan_endpoints(chat_id)
+    
+    # Report
+    report = (
+        f"📊 *Scan Results*\n\n"
+        f"📡 Scanned: {scan_result['total_scanned']}\n"
+        f"✅ Working: {len(scan_result['successful'])}\n"
+        f"🔄 Repeatable: {len(scan_result['repeatable'])}\n"
+        f"💰 Available: {scan_result['total_coins']:,} coins\n"
+    )
+    
+    if scan_result['repeatable']:
+        report += "\n🎯 *JACKPOT (Can claim multiple times!):*\n"
+        for r in scan_result['repeatable'][:10]:
+            report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}/claim\n"
+        
+        await send_telegram(chat_id, report)
+        
+        # Step 3: Auto Claim
+        await send_telegram(chat_id, "⛏️ *Starting Auto-Claim...*")
+        claimed = await auto_claim(chat_id, times=100)
+        
+        await send_telegram(
+            chat_id,
+            f"✅ *Claiming Complete!*\n\n"
+            f"💰 Claimed: {claimed:,} coins\n"
+            f"💎 Total All-Time: {game_session['total_claimed']:,}"
+        )
+    else:
+        await send_telegram(chat_id, report + "\n❌ No repeatable endpoints found")
 
 # ==================== COMMANDS ====================
 async def process_command(chat_id: str, command: str):
@@ -402,7 +528,7 @@ async def process_command(chat_id: str, command: str):
     if command in ['/start', '/help', '1']:
         help_text = (
             "🎣 *FishMya Coin Miner*\n\n"
-            "🔐 Login: HTTP Method\n"
+            "🔐 Login: WebSocket (အလုပ်လုပ်တယ်)\n"
             "🔍 Scan: Auto\n"
             "💰 Claim: Auto\n\n"
             "📋 *Commands:*\n"
@@ -415,92 +541,50 @@ async def process_command(chat_id: str, command: str):
         )
         await send_telegram(chat_id, help_text)
     
-    elif command in ['/mine', '/start_mining', '/play']:
-        await send_telegram(chat_id, "🎣 *Starting Coin Miner...*\n\nPlease wait...")
-        
-        # Scan
-        scan_result = await scan_endpoints(chat_id)
-        
-        # Report
-        report = (
-            f"📊 *Scan Results*\n\n"
-            f"📡 Scanned: {scan_result['total_scanned']}\n"
-            f"✅ Working: {len(scan_result['successful'])}\n"
-            f"🔄 Repeatable: {len(scan_result['repeatable'])}\n"
-            f"💰 Available: {scan_result['total_coins']:,} coins\n"
-        )
-        
-        if scan_result['repeatable']:
-            report += "\n🎯 *JACKPOT Endpoints:*\n"
-            for r in scan_result['repeatable'][:10]:
-                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}/claim\n"
+    elif command in ['/mine', '/start', '/play']:
+        await run_miner(chat_id)
+    
+    elif command in ['/scan']:
+        login_result = await websocket_login(chat_id)
+        if login_result['success']:
+            scan_result = await scan_endpoints(chat_id)
+            report = f"📊 *Scan Done*\n\n"
+            report += f"📡 Scanned: {scan_result['total_scanned']}\n"
+            report += f"✅ Working: {len(scan_result['successful'])}\n"
+            report += f"🔄 Repeatable: {len(scan_result['repeatable'])}\n"
+            report += f"💰 Total: {scan_result['total_coins']:,}\n"
+            
+            if scan_result['repeatable']:
+                report += "\n🎯 *Repeatable:*\n"
+                for r in scan_result['repeatable'][:10]:
+                    report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}\n"
             
             await send_telegram(chat_id, report)
-            
-            # Auto claim
-            claimed = await auto_claim(chat_id, times=100)
-            game_state['total_claimed'] += claimed
-            
-            await send_telegram(
-                chat_id,
-                f"✅ *Claiming Done!*\n\n💰 Total Claimed: {claimed:,} coins"
-            )
-        else:
-            await send_telegram(chat_id, report + "\n❌ No repeatable endpoints found")
     
-    elif command in ['/scan', '/search']:
-        await send_telegram(chat_id, "🔍 *Scanning...*")
-        scan_result = await scan_endpoints(chat_id)
-        
-        report = f"📊 *Scan Done*\n\n"
-        report += f"📡 Scanned: {scan_result['total_scanned']}\n"
-        report += f"✅ Working: {len(scan_result['successful'])}\n"
-        report += f"🔄 Repeatable: {len(scan_result['repeatable'])}\n"
-        report += f"💰 Total: {scan_result['total_coins']:,}\n"
-        
-        if scan_result['repeatable']:
-            report += "\n🎯 *Repeatable:*\n"
-            for r in scan_result['repeatable'][:10]:
-                report += f"📍 `{r['endpoint']}` - {r['coin_amount']:,}\n"
-        
-        await send_telegram(chat_id, report)
-    
-    elif command in ['/claim', '/auto_claim']:
-        if game_state['repeatable_endpoints']:
-            await send_telegram(chat_id, "⛏️ *Auto claiming...*")
+    elif command in ['/claim']:
+        if game_session['repeatable_endpoints']:
             claimed = await auto_claim(chat_id, times=50)
-            game_state['total_claimed'] += claimed
             await send_telegram(chat_id, f"✅ Claimed: {claimed:,} coins")
         else:
-            await send_telegram(chat_id, "❌ No repeatable endpoints. Run /scan first.")
+            await send_telegram(chat_id, "❌ Run /scan first")
     
     elif command in ['/balance', '/check']:
-        headers = await login_and_get_headers()
-        
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(f"{GAME_URL}/api/balance", timeout=10) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        balance = extract_coin_amount(data)
-                        await send_telegram(
-                            chat_id,
-                            f"💰 *Balance:* {balance:,} coins\n"
-                            f"📱 Phone: {PHONE_NUMBER}"
-                        )
-                    else:
-                        await send_telegram(chat_id, f"❌ HTTP {response.status}")
-        except Exception as e:
-            await send_telegram(chat_id, f"❌ Error: {e}")
+        login_result = await websocket_login(chat_id)
+        if login_result['success']:
+            await send_telegram(
+                chat_id,
+                f"💰 *Balance:* {login_result['balance']:,} coins\n"
+                f"👤 Player: {login_result['nickname']}\n"
+                f"📱 Phone: {PHONE_NUMBER}"
+            )
     
     elif command in ['/status', '/info']:
         await send_telegram(
             chat_id,
             f"📊 *Bot Status*\n\n"
-            f"🎮 Game: FishMya\n"
-            f"🔐 Login: HTTP Method\n"
-            f"💰 Total Claimed: {game_state['total_claimed']:,}\n"
-            f"🔄 Repeatable Endpoints: {len(game_state['repeatable_endpoints'])}\n"
+            f"🔐 Login: {'✅ Yes' if game_session['logged_in'] else '❌ No'}\n"
+            f"💰 Total Claimed: {game_session['total_claimed']:,}\n"
+            f"🔄 Repeatable: {len(game_session['repeatable_endpoints'])}\n"
             f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
@@ -509,18 +593,14 @@ async def main():
     global last_update_id
     
     print("\n" + "=" * 60)
-    print("🎣 FishMya Coin Miner (HTTP Login)")
+    print("🎣 FishMya Coin Miner (WebSocket Login)")
     print(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"🔑 Token: {'✅ Set (' + str(len(ACCESS_TOKEN)) + ' chars)' if ACCESS_TOKEN else '❌ Not set'}")
-    print(f"🌐 URL: {GAME_URL}")
+    print(f"🔑 Token: {'✅ Set' if GAME_ACCESS_TOKEN else '❌ Not set'}")
+    print(f"📡 WS: {WS_URL}")
     print("=" * 60 + "\n")
     
-    if not ACCESS_TOKEN:
-        logger.error("❌ ACCESS_TOKEN is empty! Check FULL_GAME_URL")
-        return
-    
-    logger.info("🤖 Bot polling started...")
-    logger.info("💡 Send /start to your bot on Telegram!")
+    logger.info("🤖 Bot polling...")
+    logger.info("💡 Send /start to your bot!")
     
     while True:
         try:
@@ -538,13 +618,12 @@ async def main():
                     text = message.get('text', '')
                     
                     if chat_id and text:
-                        logger.info(f"📩 Message from {chat_id}: {text}")
+                        logger.info(f"📩 {chat_id}: {text}")
                         await process_command(chat_id, text)
             
             await asyncio.sleep(2)
             
         except KeyboardInterrupt:
-            logger.info("Bot stopped")
             break
         except Exception as e:
             logger.error(f"Error: {e}")
