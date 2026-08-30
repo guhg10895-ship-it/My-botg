@@ -2,7 +2,7 @@
 """
 FishMya Game - Full Auto Scan + Exploit Bot
 Author: GHOST
-Version: 14.0 - Auto Scan + Store + Exploit + Buttons
+Version: 15.0 - No Lucky Wheel + GitHub Secrets
 """
 
 import asyncio
@@ -10,6 +10,7 @@ import aiohttp
 import json
 import time
 import sys
+import os
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
@@ -18,9 +19,9 @@ import ssl
 import websocket
 import threading
 
-# ==================== CONFIGURATION ====================
-TELEGRAM_BOT_TOKEN = "8801207672:AAEsJfwy12ePwpjvDNalCeIrYQl-91vgMMk"
-GAME_ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJkMDBvMWdJdXhnTHNsY1BoT0tuNkVwNkNLVEw5U21mWEU3ZUVDUUV5OUk4In0.eyJqdGkiOiIxMzFlZWE5OS1mZWNiLTRjNjMtYWZkMy02MDI4MDExYzczYjciLCJleHAiOjE3ODk3NTY5NTAsIm5iZiI6MCwiaWF0IjoxNzg3MDc4NTUwLCJpc3MiOiJodHRwczovL2lkLm15dGVsLmNvbS5tbS9hdXRoL3JlYWxtcy9jaW0iLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiMTgwMjc3MWUtNDI2Mi00MzkwLTkzYTAtNTgxMDA0NTViMDZhIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiY3BtLWNsaWVudCIsImF1dGhfdGltZSI6MCwic2Vzc2lvbl9zdGF0ZSI6ImFjNWViYzI0LTdjMTUtNDYwZC04NDgzLWY0MzI2YzU0NDk2YiIsImFjciI6IjEiLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7ImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoicHJvZmlsZSBlbWFpbCIsImVtYWlsX3ZlcmlmaWVkIjpmYWxzZSwicHJlZmVycmVkX3VzZXJuYW1lIjoiYzYxNDgwMzAtNTMwNS00YWUxLTkwNjYtZDA5MTM0Yzg0MGFlIiwiaWQiOiIxODAyNzcxZS00MjYyLTQzOTAtOTNhMC01ODEwMDQ1NWIwNmEifQ.nG5DWSXOdVkdojz31jD6OonpRbZ_WutgRlzXx93rNBqeX4cTxMpr0B-7z2bDCB5R27EOrbg1DTKPo62eiI8qy94mEeg1wbKFvJOKXxjkugAwq5OZcSUcHeWR9KOS4cZciVAiph4TMNXbwhPWu-mW55zYkRNGXW9NPfd_zJZvnokgGEXFAPUYn0rdGX6vxYIgglbyDPRL1lftxFT0YmfFUruj2_Kva11xh1DN-m5yMlXZA1AtBLAlHDvllEzULXHu6f3ByiuTA_PvdZumJlLVZTBChcIHiDGOniANpK_DKMXoohrOl_DrZD9GcLAGstK6zR98hjmEF0P2OE4BCrkGEQ"
+# ==================== CONFIGURATION (GitHub Secrets) ====================
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+GAME_ACCESS_TOKEN = os.environ.get("GAME_ACCESS_TOKEN", "")
 WS_URL = "wss://api-fishmcloud.ugame.vn:2083"
 
 WS_HEADERS = [
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 last_update_id = 0
 
-# ==================== SCAN ROUTES ====================
+# ==================== SCAN ROUTES (No Lucky Wheel) ====================
 SCAN_ROUTES = [
     {"route": "claimItemOnline", "data": {"package": 1}, "desc": "Pkg 1"},
     {"route": "claimItemOnline", "data": {"package": 2}, "desc": "Pkg 2"},
@@ -74,10 +75,6 @@ SCAN_ROUTES = [
     {"route": "claimBonus", "data": {}, "desc": "Claim Bonus"},
     {"route": "getBonus", "data": {}, "desc": "Get Bonus"},
     {"route": "bonusReward", "data": {}, "desc": "Bonus Reward"},
-    {"route": "spinLucky", "data": {}, "desc": "Spin Lucky"},
-    {"route": "luckySpin", "data": {}, "desc": "Lucky Spin"},
-    {"route": "spinWheel", "data": {}, "desc": "Spin Wheel"},
-    {"route": "wheelSpin", "data": {}, "desc": "Wheel Spin"},
     {"route": "claimItem", "data": {}, "desc": "Claim Item"},
     {"route": "useItem", "data": {"type": 1}, "desc": "Use Item 1"},
     {"route": "useItem", "data": {"type": 2}, "desc": "Use Item 2"},
@@ -359,7 +356,7 @@ def scan_routes(chat_id: str):
                 'data': route_data,
                 'desc': desc,
                 'coins': coins_found,
-                'repeatable': True  # Will test below
+                'repeatable': True
             }
             
             # Test repeatability
@@ -407,7 +404,7 @@ def scan_routes(chat_id: str):
     
     ws.close()
     
-    bot_state['found_routes'] = [r for r in found if r['repeatable']]  # Only keep repeatable
+    bot_state['found_routes'] = [r for r in found if r['repeatable']]
     bot_state['scanning'] = False
     
     # Report
@@ -673,10 +670,15 @@ async def main():
     print("\n" + "=" * 60)
     print("🤖 FishMya Auto Scan + Exploit Bot")
     print(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"🔑 Token: {'✅ Set' if GAME_ACCESS_TOKEN else '❌ Not set'}")
+    print(f"🔑 Bot Token: {'✅ Set' if TELEGRAM_BOT_TOKEN else '❌ Not set'}")
+    print(f"🔑 Game Token: {'✅ Set' if GAME_ACCESS_TOKEN else '❌ Not set'}")
     print(f"📡 WS: {WS_URL}")
     print(f"🔍 Scan Routes: {len(SCAN_ROUTES)}")
     print("=" * 60 + "\n")
+    
+    if not TELEGRAM_BOT_TOKEN or not GAME_ACCESS_TOKEN:
+        logger.error("❌ Tokens not set! Check GitHub Secrets.")
+        return
     
     logger.info("🤖 Bot polling...")
     logger.info("💡 Send /start to begin!")
@@ -691,7 +693,6 @@ async def main():
                 if update_id > last_update_id:
                     last_update_id = update_id
                 
-                # Handle callback
                 if 'callback_query' in update:
                     callback = update['callback_query']
                     chat_id = str(callback.get('message', {}).get('chat', {}).get('id', ''))
@@ -701,7 +702,6 @@ async def main():
                         logger.info(f"🔘 Button: {data}")
                         await handle_callback(chat_id, data)
                 
-                # Handle message
                 if 'message' in update:
                     message = update['message']
                     chat_id = str(message.get('chat', {}).get('id', ''))
